@@ -95,4 +95,5 @@ spgrid_to_rgrid(const spgrid_t *grid, rgrid_t *rgrid,
 int
 spgrid_dump(const spgrid_t *grid, FILE *file);
 
+
 #endif

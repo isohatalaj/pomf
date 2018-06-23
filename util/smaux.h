@@ -31,6 +31,14 @@ cs *
 diag(int n, const double *data, int stride, int triplet);
 
 /**
+ * Construct an identity sparse matrix. If `triplet == 1` then result
+ * is in triplet format, otherwise it is converted to compressed
+ * column.
+ */
+cs *
+eye(int n, int triplet);
+
+/**
  * Construct differentiation matrix along axis `axis` given grid
  * specification `grid`. If parameter `triplet == 1`, then output in
  * triplet format, otherwise converted to compressed column.  
@@ -38,5 +46,11 @@ diag(int n, const double *data, int stride, int triplet);
 cs *
 deriv(const rgrid_t *grid, int axis, int triplet);
 
+/**
+ * Rearrange `cs` column compressed matrix so that rows are stored in
+ * ascending order.
+ */
+int
+rowsort(cs *A);
 
 #endif

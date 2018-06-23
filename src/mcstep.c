@@ -1,5 +1,4 @@
 
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -94,12 +93,11 @@ main(void)
   spgrid_set_bound(&grid, POMF_I_ETA, 0.0, 1.0);
 
   /* Simulation parameters */
-  const double t_sample = 50000.0;
-  const double t_skip = 10000.0;
-  const double dt = 0.01;
-  const size_t n_copies = 1;
-  const size_t n_steps = (t_skip + t_sample) / dt;
-  const size_t n_skip = t_skip / dt;
+  const double t_end = 1.0;
+  const size_t n_copies = 100000;
+  const size_t n_steps = 10;
+  const size_t n_skip = 9;
+  const double dt = t_end / n_steps;
 
   /* Simulation data */
   states = malloc(POMF_DIM*n_copies*sizeof(*states));

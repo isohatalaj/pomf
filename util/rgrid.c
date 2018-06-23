@@ -2,11 +2,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include "rgrid.h"
 
 
-rgrid_t rgrid_nil = {0, NULL, NULL, NULL, NULL, 0};
+const rgrid_t rgrid_nil = RGRID_NIL;
 
 void
 rgrid_destroy(rgrid_t *self)
@@ -55,6 +56,9 @@ rgrid_init(rgrid_t *self, int dim, const int *ns, const double *bs)
       /* if this needs to be modified, be advised that spgrid code
 	 assumes the following formula for step length */
       self->hs[i] = (bs[2*i + 1] - bs[2*i + 0]) / (ns[i] - 1);
+
+      CHECK( !isfinite(self->hs[i]), FAILED );
+      CHECK( self->hs[i] <= 0.0, FAILED );
 
       self->strides[dim - i - 1] = i == 0 ? 1 : ns[dim - i]*self->strides[dim - i];
     }
@@ -252,4 +256,28 @@ rgrid_marginals(const rgrid_t *grid, const double *x,
     }
 
   return status;
+}
+
+int
+rgrid_nearest_i(const rgrid_t *self, const double *x, int *i)
+{
+  int k;
+  for (k = 0; k < self->dim; ++k)
+    {
+      if (x[k] <= self->bs[2*k+0])
+	i[k] = 0;
+      else if (x[k] >= self->bs[2*k+1])
+	i[k] = self->ns[k] - 1;
+
+      const double h_ = (self->bs[2*k+1] - self->bs[2*k+0]) / self->ns[k];
+      i[k] = floor((x[k] - self->bs[2*k+0]) / h_);
+    }
+
+  return OK;
+}
+
+double
+rgrid_volel(const rgrid_t *self)
+{
+  return dprod(self->dim, self->hs);
 }

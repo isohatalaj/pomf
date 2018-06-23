@@ -3,8 +3,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "umfsolve.h"
+
 #include "pomf_smsimu.h"
 #include "pomf_model.h"
+
 
 int
 main()
@@ -26,28 +29,42 @@ main()
   pomf_params_t p;
 
   /* Model parameters --------------------------------------------- */
-  const double a_mean = 0.1;
-  const double a_stddev = 0.05;
+  /* const double a_mean = 0.1; */
+  /* const double a_stddev = 0.05; */
+  /* const double a_revrate = 0.5; */
+  /* p.a_bar       = a_mean; */
+  /* p.gamma       = a_revrate; */
+  /* p.sigma_a     = sqrt(2*a_revrate)*a_stddev; */
+  /* p.sigma_c     = 0.15; */
+  /* p.sigma_c_bar = 0.15; */
+  /* p.kappa       = 0.00; */
+  /* p.r_bar       = 0.02; */
+  /* p.rho         = 0.07; */
+  /* p.rho_bar     = 0.06; */
+
+  const double a_mean = 0.070;
+  const double a_stddev = 0.035;
   const double a_revrate = 0.5;
   p.a_bar       = a_mean;
   p.gamma       = a_revrate;
   p.sigma_a     = sqrt(2*a_revrate)*a_stddev;
-  p.sigma_c     = 0.15;
-  p.sigma_c_bar = 0.15;
-  p.kappa       = 0.00;
-  p.r_bar       = 0.02;
-  p.rho         = 0.07;
-  p.rho_bar     = 0.06;
-
+  p.sigma_c     = 0.025;
+  p.sigma_c_bar = 0.025;
+  p.kappa       = -0.707;
+  p.r_bar       = 0.010;
+  p.rho         = 0.070;   /* Note: Model depends only on difference rho - rho_bar */
+  p.rho_bar     = 0.050;
+  
   const int use_cov = 1;
 
   /* Solution domain ---------------------------------------------- */
-  const int ns[POMF_DIM] = {31, 31, 41};
+  const int ns[POMF_DIM] = {30, 30, 50};
   double bs[2*POMF_DIM];
   
   /* Solver parameters -------------------------------------------- */
   const double solver_tol = 1e-9;
   const int solver_lu_order = 1;
+  int use_umfpack = 1;
   
   /* Initialization ----------------------------------------------- */
 
@@ -70,22 +87,29 @@ main()
   
   lfunc(bs, &p);
   
-  status = rgrid_init(&grid, POMF_DIM, ns, bs);
-  if (status) goto exit;
+  CHECK( rgrid_init(&grid, POMF_DIM, ns, bs), FAILED );
 
-  status = pomf_smkfe(&grid,
-		      POMF_DIM, POMF_WDIM, sfunc, &p,
-		      &KFE_op, &Jx_ops, &rhs);
-  if (status) goto exit;
-
-  CHECK_NULL( fx = malloc(grid.m*sizeof(*fx)), OUT_OF_MEM );
-  memcpy(fx, rhs, grid.m*sizeof(*fx));
-
-  CHECK( !cs_lusol(solver_lu_order, KFE_op, fx,
-		   solver_tol),
+  CHECK( pomf_smkfe(&grid,
+		    POMF_DIM, POMF_WDIM, sfunc, &p,
+		    &KFE_op, &Jx_ops, &rhs),
 	 FAILED );
-
-  CHECK_NULL( Jxs = malloc(POMF_DIM*sizeof(*Jxs)), OUT_OF_MEM );
+  
+  CHECK_NULL( fx = malloc(grid.m*sizeof(*fx)), OUT_OF_MEM );
+  
+  if (use_umfpack)
+    {
+      CHECK( umfsolve(KFE_op, rhs, fx),
+	     FAILED );
+    }
+  else
+    {
+      memcpy(fx, rhs, grid.m*sizeof(*fx));
+      CHECK( !cs_lusol(solver_lu_order, KFE_op, fx,
+		       solver_tol),
+	     FAILED );
+    }
+  
+  CHECK_NULL( Jxs = calloc(POMF_DIM, sizeof(*Jxs)), OUT_OF_MEM );
 
   for (i = 0; i < POMF_DIM; ++i)
     {
@@ -177,5 +201,4 @@ main()
 
   return status;
 }
-
 

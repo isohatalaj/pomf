@@ -16,14 +16,15 @@ typedef struct {
 
   double *hs;
   int *strides;
-  int m;
+  int m;		/*< Total number of points in the grid. */
 } rgrid_t;
 
 /**
  * Null grid for initializing stack allocated grid objects. Safe pass
  * into `rgrid_destroy`.
  */
-extern rgrid_t rgrid_nil;
+#define RGRID_NIL {0, NULL, NULL, NULL, NULL, 0}
+extern const rgrid_t rgrid_nil;
 
 /**
  * Deallocate data associated with a grid object. Frees only objects
@@ -49,6 +50,7 @@ rgrid_init(rgrid_t *self, int dim, const int *ns, const double *bs);
  * not `NULL`, also the grid locations are computed (the lower bounds
  * along each dimension).
  */
+
 void
 rgrid_start(const rgrid_t *self, int *i, double *x);
 
@@ -66,6 +68,19 @@ rgrid_step(const rgrid_t *self, int *i, double *x);
  */
 int
 rgrid_rindex(const rgrid_t *self, int *i);
+
+/**
+ * Compute the size of a volume element.
+ */
+double
+rgrid_volel(const rgrid_t *self);
+
+/**
+ * Find an approximating grid index to given point. Point selected so
+ * that uniformly distributed x will give uniformly distributed i.
+ */
+int
+rgrid_nearest_i(const rgrid_t *self, const double *x, int *i);
 
 /**
  * Print data evaluated on a grid. Parameter `grid` holds the grid

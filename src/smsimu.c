@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "pomf_smsimu.h"
+#include "umfsolve.h"
 
 /**
  * Helper function: Given a `dim` times `wdim` matrix `s` with
@@ -31,15 +32,14 @@ ccovar(const int dim, const int wdim, const double *s, double *c)
 }
 
 int
-pomf_smkfe(const rgrid_t *grid,
-	   int dim, int wdim,
-	   int (*sdefunc)(const double *x,
-			  double *mu, double *sigma,
-			  void *params),
-	   void *params,
-	   cs **KFE_out,
-	   cs ***Js_out,
-	   double **b_out)
+pomf_smkfe_0(const rgrid_t *grid,
+	     int dim, int wdim,
+	     int (*sdefunc)(const double *x,
+			    double *mu, double *sigma,
+			    void *params),
+	     void *params,
+	     cs **KFE_out,
+	     cs ***Js_out)
 {
   int i, j;
   int status = OK;
@@ -55,16 +55,11 @@ pomf_smkfe(const rgrid_t *grid,
    * datapoint in the grid. */
   const int ystride = dim*(1 + dim);
   double *y = NULL;  /* Vector of drift and diffusion data */
-  double *b = NULL;  /* To hold the KF equation rhs vector, once we're
-			done */
 
   cs *KFE = NULL;  /* To hold the KF equation lhs operator, once we're
 		      done */
   cs **Js = NULL;  /* To hold the prob. current operators, once we're
 		      done */
-  cs **Ks = NULL;  /* Used in constructing boundary conditions
-		      (selector matrices for rows of Js to be injected
-		      into KFE) */
   cs **Ds = NULL;  /* Derivative operators, one for each dimension. */
 
   /* Temporary matrices */
@@ -76,9 +71,7 @@ pomf_smkfe(const rgrid_t *grid,
   if (grid->dim != dim) { status = INVALID; goto exit; }
   
   CHECK_NULL( y = malloc(ystride*m*sizeof(*y)),       OUT_OF_MEM );
-  CHECK_NULL( b = malloc(m*sizeof(*b)),               OUT_OF_MEM );
   CHECK_NULL( Js = calloc(dim, sizeof(*Js)),          OUT_OF_MEM );
-  CHECK_NULL( Ks = calloc(dim, sizeof(*Ks)),          OUT_OF_MEM );
   CHECK_NULL( Ds = calloc(dim, sizeof(*Ds)),          OUT_OF_MEM );
   CHECK_NULL( iwork = malloc(dim*sizeof(*iwork)),     OUT_OF_MEM );
   CHECK_NULL( work = malloc(work_size*sizeof(*work)), OUT_OF_MEM );
@@ -88,7 +81,7 @@ pomf_smkfe(const rgrid_t *grid,
   double *sigma = mu + dim;
   double *diffuse = sigma + dim*wdim;
 
-  /* Allocate derivative operators */
+   /* Allocate derivative operators */
   for (i = 0; i < dim; ++i)
     CHECK_NULL( Ds[i] = deriv(grid, i, SPALLOC_CCS), OUT_OF_MEM );
 
@@ -119,8 +112,8 @@ pomf_smkfe(const rgrid_t *grid,
   /* Now add the diffusion terms. Here using sparse add/multiplies to
    * do some of the dirty work, but really, we could just splice in
    * the routines for constructing differentiation matrices, and
-   * prolly get better performance. Now just trying to write something
-   * that works and is easy to debug! */
+   * prolly get marginally better performance. Now just trying to
+   * write something that works and is easy to debug! */
   for (i = 0; i < dim; ++i)
     {
       for (j = 0; j < dim; ++j)
@@ -148,8 +141,247 @@ pomf_smkfe(const rgrid_t *grid,
       cs_spfree(S); S = NULL;
       cs_spfree(KFE); KFE = T; T = NULL;
     }
+
+
+ exit:
+  Xfree(work);
+  Xfree(iwork);
+  Xfree(y);
+  Xfree_(S, cs_spfree);
+  Xfree_(T, cs_spfree);
+  Xfree_(U, cs_spfree);
+
+  Xfree_many(Ds, dim, cs_spfree);
+
+  if (status == OK)
+    {
+      *KFE_out = KFE;
+      *Js_out = Js;
+    }
+  else
+    {
+      *KFE_out = NULL;
+      *Js_out = NULL;
+
+      Xfree_(KFE, cs_spfree);
+      Xfree_many(Js, dim, cs_spfree);
+    }
+
+  return status;
+}
+
+int
+pomf_smkfe_timedep(const rgrid_t *grid,
+		   int dim, int wdim,
+		   int (*sdefunc)(const double *x,
+				  double *mu, double *sigma,
+				  void *params),
+		   void *params,
+		   double dt,
+		   cs **LHS_out,
+		   cs **RHS_out,
+		   cs ***Js_out)
+{
+  int i, j;
+  int status = OK;
+  int *iwork = NULL;
+  const int m = grid->m;
+
+  /* Sparse matrix allocated sizes could perhaps be tweaked, nzmax's
+   * are pretty much just guessed here. */
+
+  /* Drift and diffusion data, allocating `dim` elements for drift and
+   * `dim*dim` for the diffusion matrices. Need one of such for each
+   * datapoint in the grid. */
+  const int ystride = dim*(1 + dim);
+  double *b = NULL;  /* To hold the KF equation rhs vector, once we're
+			done */
+
+  cs *KFE = NULL;  /* To hold the KF equation lhs operator, once we're
+		      done */
+  cs **Js = NULL;  /* To hold the prob. current operators, once we're
+		      done */
+  cs **Ks = NULL;  /* Used in constructing boundary conditions
+		      (selector matrices for rows of Js to be injected
+		      into KFE) */
+
+  cs *RHS = NULL, *LHS = NULL;
   
-  /* OK, now do the boundary condition overrides. */
+  /* Temporary matrices */
+  cs *T = NULL, *S = NULL, *U = NULL;
+
+  CHECK_NULL( iwork = malloc(dim*sizeof(*iwork)), OUT_OF_MEM );
+  CHECK_NULL( Ks = calloc(dim, sizeof(*Ks)), OUT_OF_MEM );
+
+  /* Compute the KFE and J operators without boundary conditions. */
+  CHECK( pomf_smkfe_0(grid, dim, wdim, sdefunc, params,
+		      &KFE, &Js),
+	 FAILED );
+
+  /* Crank-Nicolson time-step taking the distribution from f to f' in
+   * time dt is */
+  /*  [I + 0.5*dt*K]f' =  [I - 0.5*dt*K]f */
+  /* We will set LHS and RHS as the above operators.*/
+
+  CHECK_NULL( T = eye(m, SPALLOC_CCS), OUT_OF_MEM );
+  CHECK_NULL( LHS = cs_add(T, KFE, 1.0, +0.5*dt), OUT_OF_MEM );
+  CHECK_NULL( RHS = cs_add(T, KFE, 1.0, -0.5*dt), OUT_OF_MEM );
+
+  cs_spfree(T); T = NULL;
+
+  /* Now apply boundary condition overrides. */
+  
+  /* Ks[i] selects the rows where Js[i] is included. T will be a
+   * diagonal matrix with zero elements on rows that are excluded from
+   * KFE in favour of a boundary condition, other diagonal elements
+   * are unity => Left-multiply by T zeros rows corresponding to
+   * boundary points; adding to T*KFE the Ks[i] weighted Js[i]
+   * matrices fills these rows with the appropriate boundary
+   * conditions. */
+  CHECK_NULL( T = cs_spalloc(m, m, 4*m,
+			     SPALLOC_VALUES, SPALLOC_TRIPLET),
+	      OUT_OF_MEM );
+
+  for (i = 0; i < dim; ++i)
+    CHECK_NULL( Ks[i] = cs_spalloc(m, m, 4*m,
+				   SPALLOC_VALUES, SPALLOC_TRIPLET),
+		OUT_OF_MEM );
+
+
+  j = 0;
+  rgrid_start(grid, iwork, NULL);
+  do
+    {
+      int n_boundary = 0;
+      for (i = 0; i < dim; ++i)
+	{
+	  if (iwork[i] == 0)
+	    CHECK( !cs_entry(Ks[i], j, j, +1.0), OUT_OF_MEM ); 
+	  else if (iwork[i] == grid->ns[i] - 1)
+	    CHECK( !cs_entry(Ks[i], j, j, -1.0), OUT_OF_MEM );
+	  else
+	    continue;
+
+	  n_boundary++;
+	}
+
+      /* Rows that impose boundaries or normalisation are left to
+       * zero in matrix T, all others are unity. */
+      if (n_boundary == 0)
+	CHECK( !cs_entry(T, j, j, 1.0), OUT_OF_MEM );
+      
+      ++j;
+    }
+  while (rgrid_step(grid, iwork, NULL));
+
+  CHECK( compress_(&T), OUT_OF_MEM );
+
+  for (i = 0; i < dim; ++i)
+    CHECK( compress_(&Ks[i]), OUT_OF_MEM );
+
+  CHECK_NULL( S = cs_multiply(T, LHS), OUT_OF_MEM );
+  cs_spfree(LHS); LHS = S; S = NULL;
+
+  CHECK_NULL( S = cs_multiply(T, RHS), OUT_OF_MEM );
+  cs_spfree(RHS); RHS = S; S = NULL;
+
+  cs_spfree(T); T = NULL;
+
+  /* Now LHS, RHS have boundary rows zeroed. Now add in the boundary
+   * conditions to fill these rows.  */
+
+  for (i = 0; i < dim; ++i)
+    {
+      CHECK_NULL( T = cs_multiply(Ks[i], Js[i]), FAILED );
+
+      CHECK_NULL( S = cs_add(LHS, T, 1.0, 1.0),  FAILED );
+      cs_spfree(LHS); LHS = S; S = NULL;
+
+      CHECK_NULL( S = cs_add(RHS, T, 1.0, 1.0),  FAILED );
+      cs_spfree(RHS); RHS = S; S = NULL;
+      
+      cs_spfree(T); T = NULL;
+    }
+
+ exit:
+  
+  Xfree(iwork);
+  Xfree_(S, cs_spfree);
+  Xfree_(T, cs_spfree);
+  Xfree_(U, cs_spfree);
+
+  Xfree_many(Ks, dim, cs_spfree);
+
+  if (status == OK)
+    {
+      *LHS_out = LHS;
+      *RHS_out = RHS;
+      *Js_out = Js;
+    }
+  else
+    {
+      *LHS_out = NULL;
+      *RHS_out = NULL;
+      *Js_out = NULL;
+
+      Xfree_(LHS, cs_spfree);
+      Xfree_(RHS, cs_spfree);
+      Xfree_many(Js, dim, cs_spfree);
+    }
+
+  return status;
+}
+
+int
+pomf_smkfe(const rgrid_t *grid,
+	   int dim, int wdim,
+	   int (*sdefunc)(const double *x,
+			  double *mu, double *sigma,
+			  void *params),
+	   void *params,
+	   cs **KFE_out,
+	   cs ***Js_out,
+	   double **b_out)
+{
+  int i, j;
+  int status = OK;
+  int *iwork = NULL;
+  const int m = grid->m;
+
+  /* Normalisation is not imposed if b_out is null.  */
+  int normalize = b_out == NULL ? 0 : 1;
+
+  /* Sparse matrix allocated sizes could perhaps be tweaked, nzmax's
+   * are pretty much just guessed here. */
+
+  /* Drift and diffusion data, allocating `dim` elements for drift and
+   * `dim*dim` for the diffusion matrices. Need one of such for each
+   * datapoint in the grid. */
+  const int ystride = dim*(1 + dim);
+  double *b = NULL;  /* To hold the KF equation rhs vector, once we're
+			done */
+
+  cs *KFE = NULL;  /* To hold the KF equation lhs operator, once we're
+		      done */
+  cs **Js = NULL;  /* To hold the prob. current operators, once we're
+		      done */
+  cs **Ks = NULL;  /* Used in constructing boundary conditions
+		      (selector matrices for rows of Js to be injected
+		      into KFE) */
+
+  /* Temporary matrices */
+  cs *T = NULL, *S = NULL, *U = NULL;
+
+  CHECK_NULL( iwork = malloc(dim*sizeof(*iwork)), OUT_OF_MEM );
+  CHECK_NULL( Ks = calloc(dim, sizeof(*Ks)), OUT_OF_MEM );
+  CHECK_NULL( b = malloc(m*sizeof(*b)), OUT_OF_MEM );
+
+  /* Compute the KFE and J operators without boundary conditions. */
+  CHECK( pomf_smkfe_0(grid, dim, wdim, sdefunc, params,
+		      &KFE, &Js),
+	 FAILED );
+
+  /* Now apply boundary condition overrides. */
   
   /* Ks[i] selects the rows where Js[i] is included. T will be a
    * diagonal matrix with zero elements on rows that are excluded from
@@ -169,8 +401,15 @@ pomf_smkfe(const rgrid_t *grid,
 
 
   /* Compute the index for the normalisation condition. */
-  int m_norm = 0; // m / 2;
-  
+  int m_norm = normalize ? m / 2 : -1;
+
+  /*
+   * 
+   * A_ij X_j = 0 
+   * J_i X_i = 1 
+   *
+   */
+
   j = 0;
   rgrid_start(grid, iwork, NULL);
   do
@@ -222,51 +461,55 @@ pomf_smkfe(const rgrid_t *grid,
    * conditions to fill these rows.  */
 
   /* Start with normalisation */
-  CHECK_NULL( T = cs_spalloc(m, m, m,
-			     SPALLOC_VALUES, SPALLOC_TRIPLET),
-	      OUT_OF_MEM );
-
-  double dV = 1.0;
-  for (i = 0; i < dim; ++i) dV *= grid->hs[i];
-
-  for (i = 0; i < m; ++i)
+  if (normalize)
     {
-      b[i] = i == m_norm ? 1.0 : 0.0;
-      CHECK( !cs_entry(T, m_norm, i, dV), FAILED );
+      CHECK_NULL( T = cs_spalloc(m, m, m,
+				 SPALLOC_VALUES, SPALLOC_TRIPLET),
+		  OUT_OF_MEM );
+      
+      double dV = 1.0;
+      for (i = 0; i < dim; ++i) dV *= grid->hs[i];
+
+      
+      for (i = 0; i < m; ++i)
+	{
+	  b[i] = i == m_norm ? 1.0 : 0.0;
+      
+	  CHECK( !cs_entry(T, m_norm, i, dV), FAILED );
+	}
+
+      CHECK( compress_(&T), OUT_OF_MEM );
+      CHECK_NULL( S = cs_add(KFE, T, 1.0, 1.0), FAILED );
+      
+      cs_spfree(KFE); KFE = S; S = NULL;
+      cs_spfree(T); T = NULL;
+
     }
-
-  CHECK( compress_(&T), OUT_OF_MEM );
-  CHECK_NULL( S = cs_add(KFE, T, 1.0, 1.0), FAILED );
-
-  cs_spfree(KFE); KFE = S; S = NULL;
-  cs_spfree(T); T = NULL;
-
+  
   /* Now boundary currents */
   for (i = 0; i < dim; ++i)
     {
       CHECK_NULL( T = cs_multiply(Ks[i], Js[i]), FAILED );
       CHECK_NULL( S = cs_add(KFE, T, 1.0, 1.0),  FAILED );
-
+	  
       cs_spfree(KFE); KFE = S; S = NULL;
       cs_spfree(T); T = NULL;
     }
 
  exit:
-  Xfree(work);
+  
   Xfree(iwork);
-  Xfree(y);
   Xfree_(S, cs_spfree);
   Xfree_(T, cs_spfree);
   Xfree_(U, cs_spfree);
 
-  Xfree_many(Ds, dim, cs_spfree);
   Xfree_many(Ks, dim, cs_spfree);
 
   if (status == OK)
     {
       *KFE_out = KFE;
       *Js_out = Js;
-      *b_out = b;
+      if (normalize) *b_out = b;
     }
   else
     {
@@ -281,6 +524,44 @@ pomf_smkfe(const rgrid_t *grid,
 
   return status;
 }
+
+int
+pomf_smsimu_step(const rgrid_t *grid,
+		 double dt,
+		 cs *LHS,
+		 cs *RHS,
+		 double *f_in)
+{
+  /* Crank-Nicolson */
+  /*  (f(t + dt) - f(t)) / dt = (Kf(t + dt) + Kf(t)) / 2  */
+  /*  f = f(t), f' = f(t + dt) */
+  /*  f' - f = 0.5*dt*(Kf' + Kf)  */
+  /*  [I - 0.5*dt*K]f' =  [I + 0.5*dt*K]f */
+
+  /* Backward Euler */
+  /*  (f(t + dt) - f(t)) / dt = Kf(t + dt)  */
+  /*  f = f(t), f' = f(t + dt) */
+  /*  f' - f = dt*Kf'  */
+  /*  [I - dt*K]f' = f */
+  
+  int status = OK;
+  const int m = grid->m;
+  int i;
+
+  double *f_rhs = NULL;
+
+  CHECK_NULL( f_rhs = malloc(m*sizeof(*f_rhs)), OUT_OF_MEM );
+  
+  cs_gaxpy(RHS, f_in, f_rhs);
+
+  CHECK( umfsolve(LHS, f_rhs, f_in), FAILED );
+
+ exit:
+  Xfree(f_rhs);
+
+  return status;
+}
+
 
 int
 pomf_covfj(rgrid_t *grid,
