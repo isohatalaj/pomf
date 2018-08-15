@@ -30,14 +30,20 @@ mcsimu = pp.MCSimu(dt=dt, n_samples=n_samples)
 # Upon construction, the `mcsimu` object has been set to somewhat
 # arbitrary initial values. The parameters can now be assigned new
 # values..
-mcsimu.pars = pp.Pars(a_bar = 0.075,
-                      gamma = 0.15,
-                      sigma_c = 0.025,
-                      sigma_c_bar = 0.025,
-                      kappa = -0.0,
+mcsimu.pars = pp.Pars(a_bar = 0.15,
+                      gamma = 0.1,
+                      sigma_c = 0.30,
+                      sigma_c_bar = 0.30,
+                      kappa = 0.0,
                       r_bar = 0.010,
-                      rho = 0.070,
-                      rho_bar = 0.050)
+                      rho = 0.040,
+                      rho_bar = 0.030,
+                      sin_theta = 0.1,
+                      sin_theta_bar = 0.1,
+                      a_tilde_init = 0.15,
+                      r_init = 0.03,
+                      N0_over_y0 = 1.0,
+                      Ntot0_over_ytot0 = 1.0)
 
 # ..or alternatively/additionally directly adjusted:
 mcsimu.pars.gamma = 0.15
@@ -46,15 +52,8 @@ mcsimu.pars.kappa = -0.5
 # We can print the parameter values to screen as follows:
 mcsimu.pars.print_values()
 
-# Let's next define initial, t = 0 values for a sample run:
-a_tilde_init = mcsimu.pars.a_bar - 0.01
-r_init = mcsimu.pars.r_bar + 0.01
-
-obs_init = (a_tilde_init, r_init)
-
-
-# Finally, let us say we're interested in the outcome distribution at
-# time t_end:
+# Let us say we're interested in the outcome distribution at time
+# t_end:
 t_end = 5.0
 
 
@@ -65,7 +64,7 @@ t_end = 5.0
 
 # When initial values for the unobserved variable are not given, its
 # values are drawn from its equilibrium distribution.
-res = mcsimu.run_step(t_end, obs_init)
+res = mcsimu.run_step(t_end, None)
 
 # The `res` object now contains all the relevant information for us to
 # construct the pdf of the observables (a_tilde, r) at time t_end.
@@ -79,9 +78,9 @@ print("\nResults:")
 pdf = res.get_obs_pdf()
 
 # Test evaluating it at the initial observation
-print("a_tilde = {}, r = {}, f = {}".format(a_tilde_init,
-                                            r_init,
-                                            pdf((a_tilde_init, r_init))))
+# print("a_tilde = {}, r = {}, f = {}".format(a_tilde_init,
+#                                             r_init,
+#                                             pdf((a_tilde_init, r_init))))
 
 # Plot the pdf of observables
 res.plot_obs_pdf()

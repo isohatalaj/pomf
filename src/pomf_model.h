@@ -59,6 +59,7 @@ pomf_eta_star(const double at, const double r,
 double
 pomf_sigma_a_tilde_star(const pomf_params_t *p);
 
+
 /**
  * Compute the standard deviation of the equilibrium, unconditional
  * distribution of `delta := a - a_tilde`. The mean of the
@@ -89,6 +90,20 @@ pomf_Eta(const double *x, double *y,
 	 double *det_jacobian,
 	 double *hessians,
 	 void *params);
+
+/**
+ * Compute the drift and diffusion parameters for total net worth
+ * Ntot, firm output y, and total output ytot.
+ */
+int
+pomf_ext_musigma(const double a, const double eta, const double delta,
+		 const double Ntot,
+		 const double N0_over_y0,
+		 const double Ntot0_over_ytot0,
+		 double *mu_Ntot, double *sigma_Ntot,
+		 double *mu_y, double *sigma_y,
+		 double *mu_ytot, double *sigma_ytot,
+		 const pomf_params_t *p);
 
 int
 pomf_sdefunc(const double x[POMF_DIM], 

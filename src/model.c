@@ -87,6 +87,62 @@ pomf_sigma_a_tilde_star(const pomf_params_t *p)
   return -t0 + sqrt(t1*t1 + t2*t2); 
 }
 
+
+/**
+ * Compute the drift and diffusion parameters for total net worth
+ * Ntot, firm output y, and total output ytot.
+ */
+int
+pomf_ext_musigma(const double a, const double eta, const double delta,
+		 const double Ntot,
+		 const double N0_over_y0,
+		 const double Ntot0_over_ytot0,
+		 double *mu_Ntot, double *sigma_Ntot,
+		 double *mu_y, double *sigma_y,
+		 double *mu_ytot, double *sigma_ytot,
+		 const pomf_params_t *p)
+{
+  int status = OK;
+
+  const double N = eta*Ntot;
+  const double Nb = (1 - eta)*Ntot;
+  const double a_tilde = a - delta;
+  
+  const double rho = p->rho;
+  const double r = pomf_r_star(a_tilde, eta, p);
+  const double r_bar = p->r_bar;
+  const double eta_prime = 1 - eta;
+  const double sh_a_c        =       (a - r) / p->sigma_c;
+  const double sh_a_tilde_c  = (a_tilde - r) / p->sigma_c;
+  const double sh_r_c_bar    =   (r - r_bar) / p->sigma_c_bar;
+
+  const double mu_N = r - rho + sh_a_c*sh_a_tilde_c;
+  const double sigma_N = sh_a_tilde_c;
+  const double mu_Nb = r_bar - r + sh_r_c_bar*sh_r_c_bar;
+  const double sigma_Nb = sh_r_c_bar;
+
+  *mu_Ntot = mu_N*eta + mu_Nb*eta_prime;
+  *sigma_Ntot = sigma_N*eta + sigma_Nb*eta_prime;
+
+  const double ma = a * sh_a_tilde_c / p->sigma_c;
+  const double mb = r * sh_r_c_bar / p->sigma_c_bar;
+  const double sa = sh_a_tilde_c;
+  const double sb = sh_r_c_bar;
+
+  const double Ns = N * N0_over_y0;
+  const double Ntots = Ntot * Ntot0_over_ytot0;
+  
+  *mu_y = ma * Ns;
+  *sigma_y = sa * Ns;
+
+  *mu_ytot = (ma*eta + mb*eta_prime) * Ntots;
+  *sigma_ytot = (sa*eta + sb*eta_prime) * Ntots;
+
+  return status;  
+}
+  
+
+
 void
 pomf_limitfunc(double bs[2*POMF_DIM], void *params)
 {

@@ -15,11 +15,7 @@ print("Example 2 {}".format(50*'*'))
 # our artificial data for the parameter estimation.
 
 # Sequence of times, first element needs to be zero.
-ts = [0] + list(np.arange(0.1, 10.0, 1.0))
-
-# Initial observation values
-a_tilde_init = 0.05
-r_init = 0.025
+ts = [0] + list(np.arange(1.0, 10.0, 1.0))
 
 # Generate a single sample of the process in `mcres`.
 mcsimu = pp.MCSimu(n_samples=1, dt=0.01)
@@ -28,7 +24,7 @@ mcsimu = pp.MCSimu(n_samples=1, dt=0.01)
 mcsimu.pars.a_bar *= 1.1
 mcsimu.pars.kappa *= 1.25
 mcsimu.pars.rho *= 1.15
-mcres = mcsimu.run_step(ts[1:], (a_tilde_init, r_init))
+mcres = mcsimu.run_step(ts[1:], None)
 
 # Print used parameters for reference
 print("SAMPLE DATA PARAMS:")
@@ -36,7 +32,13 @@ mcres.pars.print_values()
 
 # Extract the observables from `mcres`, and including the initial
 # condition to be the first element of the list (this is required)
-obs = [[a_tilde_init, r_init]] + [[v[0][0], v[0][1]] for v in mcres.snapshots]
+obs = [[1.0, mcsimu.pars.r_init]] \
+    + [[v[0][pp.xiy], v[0][pp.xir]] for v in mcres.snapshots]
+
+print("\nGENERATED INPUT DATA:")
+for t, x in zip(ts, obs):
+    print("{:25f} {:25f} {:25f}".format(t, x[0], x[1]))
+
 
 # Construct a likelihood model instance that's been customised for the
 # process we're studying here.
@@ -44,7 +46,7 @@ obs = [[a_tilde_init, r_init]] + [[v[0][0], v[0][1]] for v in mcres.snapshots]
 # NOTE: It may be important here to increase n_samples, to make sure
 # the method converges. The max likelihood algorithm simply seeks a
 # maximum of a sum of log pdf evaluations.  But since the pdf is in
-# fact here a random variable, it slightly fluctuates from one
+# fact here a random variable, it fluctuates slightly from one
 # evaluation to the next. If these fluctations are larger than the
 # convergence set of the algorithm, the root finder will never reach
 # its stopping condition (it will instead forever keep chasing the
@@ -66,9 +68,10 @@ mlm = pp.MCLikelihoodModel(obs, ts, dt=0.01, n_samples=1000)
 #
 # NOTE: This may take a very long time, minutes or hours depending on
 # parameters!
-mlmres = mlm.fit(maxiter=1000, maxfun=1000, method='nm', xtol=1e-3, ftol=1e-3,
+mlmres = mlm.fit(maxiter=100, maxfun=100, method='nm',
+                 xtol=1e-3, ftol=1e-3,
                  skip_hessian=True)
 
 # Print summary.
-print("MLE ESTIMATED PARAMETERS:")
+print("\nMLE ESTIMATED PARAMETERS:")
 print(mlmres.summary())

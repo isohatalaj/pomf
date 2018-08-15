@@ -2,8 +2,8 @@
 include_directories(${PROJECT_SOURCE_DIR}/util)
 link_directories(${PROJECT_BINARY_DIR}/util)
 
-set(LIBPOMF_SOURCE pomf.c model.c mcsimu.c)
-set(LIBPOMF_INCLUDE pomf.h pomf_model.h pomf_mcsimu.h)
+set(LIBPOMF_SOURCE pomf.c model.c mcsimu.c mcsimux.c)
+set(LIBPOMF_INCLUDE pomf.h pomf_model.h pomf_mcsimu.h pomf_mcsimux.h)
 
 if (sparselibs_FOUND)
    set(LIBPOMF_SOURCE ${LIBPOMF_SOURCE} smsimu.c umfsolve.c fps.c)
@@ -20,6 +20,9 @@ target_link_libraries(mcrun pomf smutil ${all_libs})
 
 add_executable(mcstep mcstep.c)
 target_link_libraries(mcstep pomf smutil ${all_libs})
+
+add_executable(mcxtest mcxtest.c)
+target_link_libraries(mcxtest pomf smutil ${all_libs})
 
 if (sparselibs_FOUND)
    add_executable(smrun smrun.c)
